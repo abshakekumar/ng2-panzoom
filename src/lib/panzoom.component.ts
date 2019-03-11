@@ -6,6 +6,18 @@ import { PanZoomAPI } from './panzoom-api';
 import { Rect } from './panzoom-rect';
 declare var $: any;
 
+/*
+var oldAddEventListener = EventTarget.prototype.addEventListener;
+
+EventTarget.prototype.addEventListener = function(eventName, eventHandler: any, options: any = null)
+{
+  console.log('eventName:', eventName);
+  oldAddEventListener.call(this, eventName, function(event) {
+    eventHandler(event);
+  }, options);
+};
+*/
+
 interface ZoomAnimation {
   deltaZoomLevel: number;
   panStepFunc: Function;
@@ -72,6 +84,7 @@ export class PanZoomComponent implements OnInit, AfterViewInit, OnDestroy {
   private acceleratedFrameRef: any;
   private zoomLevelIsChanging = false;
   private dragFinishing = false;
+  private dragMouseButton: number = null;
 
   private maxScale: number; // the highest scale (furthest zoomed in) that we will allow in free zoom mode (calculated)
   private minScale: number; // the smallest scale (furthest zoomed out) that we will allow in free zoom mode (calculated)
@@ -151,6 +164,22 @@ export class PanZoomComponent implements OnInit, AfterViewInit, OnDestroy {
     this.animationTick(performance.now());
     this.scale = this.getCssScale(this.base.zoomLevel);
     this.isFirstSync = false;
+    switch(this.config.dragMouseButton) {
+      case 'left':
+        this.dragMouseButton = 0;
+        break;
+      case 'middle':
+        this.dragMouseButton = 1;
+        // this.frameElementRef.nativeElement.addEventListener('auxclick', event => event.preventDefault());
+        break;
+      case 'right':
+        document.addEventListener('contextmenu', event => event.preventDefault());
+        this.dragMouseButton = 2;
+        break;
+      default:
+        this.dragMouseButton = 0;
+    }
+
 
   }
 
@@ -262,15 +291,15 @@ export class PanZoomComponent implements OnInit, AfterViewInit, OnDestroy {
 
 
   private onMousedown = (event: any) => {
-    // console.log('PanZoomComponent: onMousedown()', event);
+    console.log('PanZoomComponent: onMousedown()', event);
+    
+    if (event.button === this.dragMouseButton || event.type === 'touchstart') {
+      event.preventDefault();
+      event.stopPropagation();
 
-    event.preventDefault();
-    event.stopPropagation();
+      this.dragFinishing = false;
+      this.panVelocity = null;
 
-    this.dragFinishing = false;
-    this.panVelocity = null;
-
-    if (event.button === 0 || event.type === 'touchstart') {
       if (this.config.panOnClickDrag) {
         this.previousPosition = {
           x: event.pageX,
@@ -285,7 +314,8 @@ export class PanZoomComponent implements OnInit, AfterViewInit, OnDestroy {
           this.zone.runOutsideAngular( () => document.addEventListener('touchmove', this.onTouchMove, { passive: true, capture: false } ) ); // leave this on document
         }
         else {
-          this.zone.runOutsideAngular( () => document.addEventListener('mousemove', this.onMouseMove, { passive: true } ) ); // leave this on document
+          console.log('got to 1');
+          this.zone.runOutsideAngular( () => document.addEventListener('mousemove', this.onMouseMove, { passive: true, capture: false } ) ); // leave this on document
           this.zone.runOutsideAngular( () => document.addEventListener('mouseup', this.onMouseUp ) ); // leave this on document
         }
       }
@@ -323,7 +353,7 @@ export class PanZoomComponent implements OnInit, AfterViewInit, OnDestroy {
 
 
   private onMouseMove = (event: any) => {
-    // console.log(`PanZoomComponent: onMouseMove()`);
+    console.log('PanZoomComponent: onMouseMove()', event);
     // console.log(`PanZoomComponent: onMouseMove(): event.timeStamp:`, event.timeStamp);
     // timestamp - 10587.879999999132 - milliseconds
     // Called when moving the mouse with the left button down
@@ -463,44 +493,48 @@ export class PanZoomComponent implements OnInit, AfterViewInit, OnDestroy {
 
 
   private onMouseUp = (event) => {
-    // console.log('PanZoomComponent: onMouseup()');
-    // console.log('PanZoomComponent: onMouseup(): event:', event);
+    console.log('PanZoomComponent: onMouseup()', event);
 
+    if (event.button !== this.dragMouseButton) {
+      return;
+    }
+    
     event.preventDefault();
     // event.stopPropagation();
-
+    
     let now = event.timeStamp;
     let timeSinceLastMouseEvent = (now - this.lastMouseEventTime) / 1000; // orig
-
+    
     if (this.panVelocity && (this.panVelocity.x !== 0 || this.panVelocity.y !== 0) ) {
       // apply strong initial dampening if the mouse up occured much later than the last mouse move, indicating that the mouse hasn't moved recently
       // TBD - experiment with this formula
       let initialMultiplier = Math.max(
-                                        0,
-                                        -0.2 + Math.pow(timeSinceLastMouseEvent + 1, -4)
-                                      );
-
-      this.panVelocity.x *= initialMultiplier;
-      this.panVelocity.y *= initialMultiplier;
-      this.dragFinishing = true;
-      // console.log(`PanZoomComponent: onMouseUp(): panVelocity:`, this.panVelocity);
-      this.zone.runOutsideAngular( () => this.animationId = this.animationFrameFunc(this.animationTick) );
-    }
-    else {
-      this.dragFinishing = false;
-      this.panVelocity = null;
-    }
-
-    this.isDragging = false;
-    // this.model.isPanning = false;
-
-    if (this.isMobile) {
-      this.zone.runOutsideAngular( () => document.removeEventListener('touchend', this.onTouchEnd) );
-      this.zone.runOutsideAngular( () => document.removeEventListener('touchmove', this.onTouchMove, <any>{ passive: true, capture: false } ) );
-    }
-    else {
-      this.zone.runOutsideAngular( () => document.removeEventListener('mousemove', this.onMouseMove ));
-      this.zone.runOutsideAngular( () => document.removeEventListener('mouseup', this.onMouseUp, <any>{ passive: true } ));
+        0,
+        -0.2 + Math.pow(timeSinceLastMouseEvent + 1, -4)
+        );
+        
+        this.panVelocity.x *= initialMultiplier;
+        this.panVelocity.y *= initialMultiplier;
+        this.dragFinishing = true;
+        // console.log(`PanZoomComponent: onMouseUp(): panVelocity:`, this.panVelocity);
+        this.zone.runOutsideAngular( () => this.animationId = this.animationFrameFunc(this.animationTick) );
+      }
+      else {
+        this.dragFinishing = false;
+        this.panVelocity = null;
+      }
+      
+      this.isDragging = false;
+      // this.model.isPanning = false;
+      
+      if (this.isMobile) {
+        this.zone.runOutsideAngular( () => document.removeEventListener('touchend', this.onTouchEnd) );
+        this.zone.runOutsideAngular( () => document.removeEventListener('touchmove', this.onTouchMove, <any>{ passive: true, capture: false } ) );
+      }
+      else {
+        console.log('got to 2');
+        this.zone.runOutsideAngular( () => document.removeEventListener('mousemove', this.onMouseMove, <any>{ passive: true, capture: false } ));
+        this.zone.runOutsideAngular( () => document.removeEventListener('mouseup', this.onMouseUp, <any>{ passive: true } ));
     }
 
     // Set the overlay to non-blocking again:
